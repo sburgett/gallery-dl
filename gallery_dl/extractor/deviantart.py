@@ -17,6 +17,7 @@ import mimetypes
 import binascii
 import time
 import re
+import math
 
 
 BASE_PATTERN = (
@@ -1080,7 +1081,9 @@ class DeviantartOAuthAPI():
         self._warn_429 = True
 
         self.delay = extractor.config("wait-min", 0)
+        self.delay_max = extractor.config("wait-max", 0)
         self.delay_min = max(2, self.delay)
+        self.delay_decay = math.sqrt(math.sqrt(2))
 
         self.mature = extractor.config("mature", "true")
         if not isinstance(self.mature, str):
@@ -1362,7 +1365,19 @@ class DeviantartOAuthAPI():
 
             if 200 <= status < 400:
                 if self.delay > self.delay_min:
-                    self.delay -= 1
+                    msg = f"API responded with {status} {response.reason}"
+
+                    # I don't think this first case ever happens.
+                    # self.delay_min is at least 2
+                    if self.delay == 1:
+                        self.delay = 0
+
+                    else:
+                        self.delay /= self.delay_decay
+                        self.delay = max(self.delay, self.delay_min)
+
+                    self.log.warning("%s. Using %.2fs delay.", msg, self.delay)
+
                 return data
             if not fatal and status != 429:
                 return None
@@ -1377,8 +1392,11 @@ class DeviantartOAuthAPI():
             msg = "API responded with {} {}".format(
                 status, response.reason)
             if status == 429:
-                if self.delay < 30:
-                    self.delay += 1
+                if self.delay < self.delay_max:
+                    if self.delay == 0:
+                        self.delay = self.delay_min * 4
+                    else:
+                        self.delay *= 2
                 self.log.warning("%s. Using %ds delay.", msg, self.delay)
 
                 if self._warn_429 and self.delay >= 3:
